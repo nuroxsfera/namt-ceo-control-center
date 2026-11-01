@@ -6,10 +6,7 @@ import {
   TrendingDown, 
   Users, 
   CheckSquare, 
-  Briefcase, 
   Bot,
-  ArrowUpRight,
-  Clock,
   AlertCircle
 } from 'lucide-react'
 import { 
@@ -19,9 +16,7 @@ import {
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  ResponsiveContainer,
-  BarChart,
-  Bar
+  ResponsiveContainer
 } from 'recharts'
 
 const chartData = [
@@ -84,7 +79,6 @@ export function Dashboard() {
   
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">{t('welcome')}, CEO</h1>
@@ -100,7 +94,6 @@ export function Dashboard() {
         </div>
       </div>
       
-      {/* Stats grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {stats.map((stat) => (
           <div key={stat.label} className="card p-5 card-hover">
@@ -130,9 +123,7 @@ export function Dashboard() {
         ))}
       </div>
       
-      {/* Main content grid */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Chart */}
         <div className="xl:col-span-2 card p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-slate-900">{t('businessDynamics')}</h2>
@@ -185,9 +176,7 @@ export function Dashboard() {
           </div>
         </div>
         
-        {/* Quick stats & pending */}
         <div className="space-y-4">
-          {/* Pending approvals */}
           <div className="card p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-slate-900 flex items-center gap-2">
@@ -209,7 +198,6 @@ export function Dashboard() {
             </div>
           </div>
           
-          {/* AI Activity */}
           <div className="card p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-slate-900 flex items-center gap-2">
@@ -236,9 +224,7 @@ export function Dashboard() {
         </div>
       </div>
       
-      {/* Bottom row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Tasks overview */}
         <div className="card p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
@@ -265,7 +251,6 @@ export function Dashboard() {
           </div>
         </div>
         
-        {/* Recent clients */}
         <div className="card p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">

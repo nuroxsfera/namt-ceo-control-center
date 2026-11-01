@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from '../hooks/useTranslation'
 import { useAppStore } from '../store/useAppStore'
 import { formatCurrency, formatDate } from '../lib/utils'
-import type { FinanceType, DataSource } from '../types'
+import type { FinanceType } from '../types'
 import { Plus, TrendingUp, TrendingDown, Wallet } from 'lucide-react'
 
 export function Finance() {
@@ -167,7 +167,7 @@ export function Finance() {
               <select
                 className="input"
                 value={form.currency}
-                onChange={e => setForm({ ...form, currency: e.target.value as any })}
+                onChange={e => setForm({ ...form, currency: e.target.value as 'RUB' | 'USD' | 'EUR' })}
               >
                 <option value="RUB">RUB</option>
                 <option value="USD">USD</option>
