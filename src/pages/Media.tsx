@@ -1,286 +1,538 @@
-import { useState, useMemo } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from '../hooks/useTranslation'
 import { useAppStore } from '../store/useAppStore'
-import { formatDate } from '../lib/utils'
-import type { MediaPost, MediaPostStatus, MediaChannel, Language } from '../types'
-import { Plus, Pencil, Trash2, Search, LayoutGrid, List } from 'lucide-react'
+import {
+  fetchTelegramStatus,
+  publishToTelegram,
+  generateMediaDraft,
+  fetchServerQueue,
+  type TelegramStatus,
+  type MediaProductionItem,
+} from '../lib/mediaApi'
+import {
+  Radio, Bot, CheckCircle2, XCircle, Clock, RefreshCw, Send, Calendar,
+  Sparkles, AlertTriangle, ExternalLink, Image as ImageIcon, FileText,
+} from 'lucide-react'
 import { cn } from '../lib/utils'
 
-const postStatuses: MediaPostStatus[] = ['IDEA', 'PLANNED', 'DRAFT', 'REVIEW', 'CEO_APPROVAL', 'READY', 'PUBLISHED']
+type MediaTab =
+  | 'dashboard'
+  | 'agent'
+  | 'channels'
+  | 'production'
+  | 'approval'
+  | 'calendar'
+  | 'published'
+  | 'settings'
+
+const TABS: { id: MediaTab; labelRu: string; labelEn: string }[] = [
+  { id: 'dashboard', labelRu: 'Dashboard', labelEn: 'Dashboard' },
+  { id: 'agent', labelRu: 'AI Media Manager', labelEn: 'AI Media Manager' },
+  { id: 'channels', labelRu: 'Channels', labelEn: 'Channels' },
+  { id: 'production', labelRu: 'Production', labelEn: 'Production' },
+  { id: 'approval', labelRu: 'Approval Queue', labelEn: 'Approval Queue' },
+  { id: 'calendar', labelRu: 'Calendar', labelEn: 'Calendar' },
+  { id: 'published', labelRu: 'Published', labelEn: 'Published' },
+  { id: 'settings', labelRu: 'Settings', labelEn: 'Settings' },
+]
+
+type LocalDraft = MediaProductionItem
 
 export function Media() {
-  const { t } = useTranslation()
-  const channels = useAppStore(s => s.mediaChannels)
-  const posts = useAppStore(s => s.mediaPosts)
-  const employees = useAppStore(s => s.employees)
-  const addChannel = useAppStore(s => s.addMediaChannel)
-  const updateChannel = useAppStore(s => s.updateMediaChannel)
-  const deleteChannel = useAppStore(s => s.deleteMediaChannel)
-  const addPost = useAppStore(s => s.addMediaPost)
-  const updatePost = useAppStore(s => s.updateMediaPost)
-  const deletePost = useAppStore(s => s.deleteMediaPost)
+  const { language } = useTranslation()
+  const [tab, setTab] = useState<MediaTab>('dashboard')
+  const [status, setStatus] = useState<TelegramStatus | null>(null)
+  const [loadingStatus, setLoadingStatus] = useState(false)
+  const [drafts, setDrafts] = useState<LocalDraft[]>([])
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [topic, setTopic] = useState('тренды ИИ')
+  const [manualText, setManualText] = useState('')
+  const [manualTitle, setManualTitle] = useState('')
+  const [scheduleAt, setScheduleAt] = useState('')
 
-  const [tab, setTab] = useState<'posts' | 'channels'>('posts')
-  const [view, setView] = useState<'table' | 'calendar'>('table')
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('ALL')
-  const [modal, setModal] = useState<'post' | 'channel' | null>(null)
-  const [editId, setEditId] = useState<string | null>(null)
+  const loadStatus = useCallback(async () => {
+    setLoadingStatus(true)
+    try {
+      const s = await fetchTelegramStatus()
+      setStatus(s)
+    } catch {
+      setStatus({ connected: false, error: 'Failed to reach /api/telegram/status', setupRequired: true })
+    } finally {
+      setLoadingStatus(false)
+    }
+  }, [])
 
-  const [postForm, setPostForm] = useState({
-    title: '', platform: 'YouTube', language: 'ru' as Language, format: 'Post',
-    publishDate: '', body: '', status: 'IDEA' as MediaPostStatus, channelId: '', assigneeId: '',
-  })
-  const [chForm, setChForm] = useState({ name: '', platform: 'YouTube', language: 'ru' as Language, url: '' })
+  const loadQueue = useCallback(async () => {
+    try {
+      const q = await fetchServerQueue()
+      if (q.items?.length) {
+        setDrafts((prev) => {
+          const map = new Map<string, LocalDraft>()
+          ;[...q.items, ...prev].forEach((i) => map.set(i.id, i))
+          return Array.from(map.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        })
+      }
+    } catch {
+      /* client-only mode */
+    }
+  }, [])
 
-  const filtered = posts.filter(p => {
-    const q = search.toLowerCase()
-    const matchQ = !q || p.title.toLowerCase().includes(q) || p.platform.toLowerCase().includes(q)
-    const matchS = statusFilter === 'ALL' || p.status === statusFilter
-    return matchQ && matchS
-  })
+  useEffect(() => {
+    loadStatus()
+    loadQueue()
+  }, [loadStatus, loadQueue])
 
-  const calendarGroups = useMemo(() => {
-    const map = new Map<string, MediaPost[]>()
-    filtered.forEach(p => {
-      const key = p.publishDate || 'No date'
-      if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(p)
-    })
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-  }, [filtered])
+  const pending = drafts.filter((d) => d.status === 'pending_approval' || d.status === 'revision')
+  const scheduled = drafts.filter((d) => d.status === 'scheduled')
+  const published = drafts.filter((d) => d.status === 'published')
 
-  const openPost = (p?: MediaPost) => {
-    if (p) {
-      setEditId(p.id)
-      setPostForm({
-        title: p.title, platform: p.platform, language: p.language, format: p.format,
-        publishDate: p.publishDate || '', body: p.body, status: p.status,
-        channelId: p.channelId || '', assigneeId: p.assigneeId || '',
+  const addLocalDraft = (item: LocalDraft) => {
+    setDrafts((prev) => [item, ...prev.filter((p) => p.id !== item.id)])
+  }
+
+  const handleGenerate = async () => {
+    setMessage(null)
+    setBusyId('generate')
+    try {
+      const { ok, data } = await generateMediaDraft(topic)
+      if (!ok) {
+        setMessage(data.error || 'Generation failed')
+        return
+      }
+      if (data.item) {
+        addLocalDraft(data.item)
+        setMessage(
+          data.imageGenerated
+            ? 'Draft + image ready → Approval Queue'
+            : data.note || 'Text draft ready → Approval Queue (no image)'
+        )
+        setTab('approval')
+      }
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const handleManualEnqueue = () => {
+    if (!manualText.trim()) return
+    const item: LocalDraft = {
+      id: `manual_${Date.now()}`,
+      title: manualTitle || manualText.slice(0, 60),
+      text: manualText,
+      sources: [],
+      stage: 'CEO Approval',
+      status: 'pending_approval',
+      createdAt: new Date().toISOString(),
+    }
+    addLocalDraft(item)
+    setManualText('')
+    setManualTitle('')
+    setTab('approval')
+    setMessage('Manual draft added to Approval Queue')
+  }
+
+  const handleApprove = async (item: LocalDraft, mode: 'now' | 'schedule') => {
+    setBusyId(item.id)
+    setMessage(null)
+    try {
+      const { ok, data } = await publishToTelegram({
+        text: item.text,
+        imageUrl: item.imageUrl,
+        title: item.title,
+        sources: item.sources,
+        mode,
+        scheduledAt: mode === 'schedule' ? scheduleAt || item.scheduledAt : undefined,
+        clientId: item.id,
       })
-    } else {
-      setEditId(null)
-      setPostForm({ title: '', platform: 'YouTube', language: 'ru', format: 'Post', publishDate: '', body: '', status: 'IDEA', channelId: '', assigneeId: '' })
+      if (!ok || data.error) {
+        setMessage(data.error || 'Publish failed')
+        addLocalDraft({ ...item, status: 'failed', error: data.error })
+        return
+      }
+      if (data.published) {
+        addLocalDraft({
+          ...item,
+          status: 'published',
+          stage: 'Published',
+          publishedAt: new Date().toISOString(),
+          telegramMessageId: data.telegramMessageId,
+        })
+        setMessage('Published to Telegram successfully')
+      } else if (data.scheduled) {
+        addLocalDraft({
+          ...item,
+          status: 'scheduled',
+          stage: 'Scheduling',
+          scheduledAt: scheduleAt || item.scheduledAt,
+        })
+        setMessage('Scheduled on server — cron will publish at the set time')
+      }
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setBusyId(null)
     }
-    setModal('post')
   }
 
-  const savePost = () => {
-    if (!postForm.title.trim()) return
-    const payload = {
-      title: postForm.title,
-      platform: postForm.platform,
-      language: postForm.language,
-      format: postForm.format,
-      publishDate: postForm.publishDate || null,
-      body: postForm.body,
-      status: postForm.status,
-      channelId: postForm.channelId || null,
-      assigneeId: postForm.assigneeId || null,
-      isDemo: false,
-    }
-    if (editId) updatePost(editId, payload)
-    else addPost(payload)
-    setModal(null)
+  const handleReject = (item: LocalDraft, revision: boolean) => {
+    addLocalDraft({
+      ...item,
+      status: revision ? 'revision' : 'rejected',
+      stage: revision ? 'Request Revision' : 'Rejected',
+    })
   }
-
-  const openChannel = (c?: MediaChannel) => {
-    if (c) {
-      setEditId(c.id)
-      setChForm({ name: c.name, platform: c.platform, language: c.language, url: c.url || '' })
-    } else {
-      setEditId(null)
-      setChForm({ name: '', platform: 'YouTube', language: 'ru', url: '' })
-    }
-    setModal('channel')
-  }
-
-  const saveChannel = () => {
-    if (!chForm.name.trim()) return
-    const payload = { name: chForm.name, platform: chForm.platform, language: chForm.language, url: chForm.url || undefined, isDemo: false }
-    if (editId) updateChannel(editId, payload)
-    else addChannel(payload)
-    setModal(null)
-  }
-
-  const confirmDel = (fn: () => void) => { if (window.confirm(t('confirmDelete'))) fn() }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">{t('media')}</h1>
-          <p className="text-slate-500 mt-1">NAMT Media · {t('contentPipeline')} · no social publishing</p>
+          <h1 className="text-2xl font-semibold text-slate-900">NAMT Media</h1>
+          <p className="text-slate-500 mt-1">
+            Telegram autonomous pipeline · CEO approval required before publish
+          </p>
         </div>
-        <div className="flex gap-2">
-          {tab === 'posts' && <button onClick={() => openPost()} className="btn-primary"><Plus className="w-4 h-4" /> Post</button>}
-          {tab === 'channels' && <button onClick={() => openChannel()} className="btn-primary"><Plus className="w-4 h-4" /> Channel</button>}
+        <button onClick={() => { loadStatus(); loadQueue() }} className="btn-secondary text-sm" disabled={loadingStatus}>
+          <RefreshCw className={cn('w-4 h-4', loadingStatus && 'animate-spin')} /> Refresh
+        </button>
+      </div>
+
+      {message && (
+        <div className="card p-3 text-sm border-namt-200 bg-namt-50 text-namt-900 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <span>{message}</span>
+        </div>
+      )}
+
+      {/* Connection strip */}
+      <div className={cn(
+        'card p-4 flex flex-col sm:flex-row sm:items-center gap-3',
+        status?.connected ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/40'
+      )}>
+        <div className="flex items-center gap-2">
+          {status?.connected ? (
+            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+          ) : (
+            <XCircle className="w-5 h-5 text-amber-600" />
+          )}
+          <div>
+            <p className="text-sm font-medium text-slate-900">
+              {status?.connected
+                ? `Telegram connected · @${status.bot?.username || 'bot'} → ${status.channel?.title || status.channel?.username || 'channel'}`
+                : 'Telegram not connected'}
+            </p>
+            {!status?.connected && (
+              <p className="text-xs text-slate-600">{status?.error || 'Complete Setup Wizard in Channels tab'}</p>
+            )}
+          </div>
+        </div>
+        <div className="sm:ml-auto flex flex-wrap gap-2 text-xs">
+          <span className="badge bg-white border text-slate-600">
+            AI key: {status?.hasAiKey ? 'yes' : 'no'}
+          </span>
+          <span className="badge bg-white border text-slate-600">
+            Server store: {status?.serverStore ? 'Upstash' : 'not set'}
+          </span>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {(['posts', 'channels'] as const).map(x => (
-          <button key={x} onClick={() => setTab(x)} className={`px-3 py-1.5 text-sm rounded-lg ${tab === x ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-            {x === 'posts' ? t('contentPipeline') : t('platforms')}
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              'px-3 py-1.5 text-sm rounded-lg whitespace-nowrap',
+              tab === t.id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+            )}
+          >
+            {language === 'ru' ? t.labelRu : t.labelEn}
           </button>
         ))}
-        {tab === 'posts' && (
-          <div className="ml-auto flex rounded-lg border border-slate-200 overflow-hidden">
-            <button onClick={() => setView('table')} className={cn('p-2', view === 'table' ? 'bg-slate-100' : '')}><List className="w-4 h-4" /></button>
-            <button onClick={() => setView('calendar')} className={cn('p-2', view === 'calendar' ? 'bg-slate-100' : '')}><LayoutGrid className="w-4 h-4" /></button>
-          </div>
-        )}
       </div>
 
+      {tab === 'dashboard' && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Metric label="Pending approval" value={pending.length} />
+          <Metric label="Scheduled" value={scheduled.length} />
+          <Metric label="Published" value={published.length} />
+          <Metric label="Telegram" value={status?.connected ? 'ON' : 'OFF'} />
+        </div>
+      )}
+
       {tab === 'channels' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {channels.map(c => (
-            <div key={c.id} className="card p-4 flex items-center justify-between gap-3">
+        <SetupWizard status={status} onRefresh={loadStatus} />
+      )}
+
+      {tab === 'agent' && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500 text-white flex items-center justify-center">
+                <Bot className="w-5 h-5" />
+              </div>
               <div>
-                <div className="font-medium text-slate-900 flex items-center gap-2">
-                  {c.name}
-                  {c.isDemo && <span className="badge bg-amber-50 text-amber-700 text-[10px]">{t('demo')}</span>}
+                <h2 className="font-semibold text-slate-900">NAMT AI Media Manager</h2>
+                <p className="text-sm text-slate-500">
+                  Generates drafts only. Never publishes without CEO approval.
+                </p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              Status: {status?.hasAiKey
+                ? 'LLM key detected on server — generation available'
+                : 'No OPENAI_API_KEY / XAI_API_KEY — generation disabled (no fake drafts)'}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                className="input flex-1"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="Topic focus"
+              />
+              <button
+                className="btn-primary"
+                disabled={busyId === 'generate' || !status?.hasAiKey}
+                onClick={handleGenerate}
+              >
+                <Sparkles className="w-4 h-4" />
+                {busyId === 'generate' ? 'Generating…' : 'Generate draft'}
+              </button>
+            </div>
+          </div>
+
+          <div className="card p-5 space-y-3">
+            <h3 className="font-medium text-slate-900">Manual draft (no AI)</h3>
+            <input className="input" placeholder="Title" value={manualTitle} onChange={(e) => setManualTitle(e.target.value)} />
+            <textarea className="input min-h-[120px]" placeholder="Post text (HTML allowed: <b>, <i>)" value={manualText} onChange={(e) => setManualText(e.target.value)} />
+            <button className="btn-secondary" onClick={handleManualEnqueue}>
+              <FileText className="w-4 h-4" /> Send to Approval Queue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'production' && (
+        <div className="card p-5">
+          <h2 className="font-semibold mb-3">Content Production pipeline</h2>
+          <ol className="text-sm text-slate-600 space-y-2 list-decimal list-inside">
+            <li>Research / Idea — agent or manual topic</li>
+            <li>Writing — LLM or manual text</li>
+            <li>Fact check — editorial responsibility of CEO on approval</li>
+            <li>Image — optional (ENABLE_IMAGE_GEN + OPENAI_API_KEY)</li>
+            <li>Quality control → CEO Approval Queue</li>
+            <li>Approve & Publish / Schedule → Telegram Bot API</li>
+            <li>Analytics — limited to message_id until channel stats API is added</li>
+          </ol>
+          <p className="mt-4 text-xs text-slate-500">
+            Pipeline stages are real status fields on drafts. Nothing is marked published unless Telegram API returns ok.
+          </p>
+        </div>
+      )}
+
+      {tab === 'approval' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+            <div className="flex-1">
+              <label className="text-xs text-slate-500">Schedule time (for Approve & Schedule)</label>
+              <input type="datetime-local" className="input" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+            </div>
+          </div>
+          {pending.length === 0 && (
+            <div className="card p-8 text-center text-slate-500">Approval Queue is empty</div>
+          )}
+          {pending.map((item) => (
+            <div key={item.id} className="card p-5 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold text-slate-900">{item.title}</h3>
+                  <p className="text-xs text-slate-500">{item.stage} · {item.createdAt}</p>
                 </div>
-                <p className="text-sm text-slate-500">{c.platform} · {c.language.toUpperCase()}</p>
+                <span className="badge bg-amber-50 text-amber-800">{item.status}</span>
               </div>
-              <div className="flex gap-1">
-                <button onClick={() => openChannel(c)} className="p-1.5 hover:bg-slate-100 rounded"><Pencil className="w-4 h-4 text-slate-500" /></button>
-                <button onClick={() => confirmDel(() => deleteChannel(c.id))} className="p-1.5 hover:bg-rose-50 rounded"><Trash2 className="w-4 h-4 text-slate-500" /></button>
+              {item.imageUrl && (
+                <div className="rounded-lg overflow-hidden border max-w-md">
+                  <img src={item.imageUrl} alt="" className="w-full object-cover max-h-64" />
+                </div>
+              )}
+              <div className="text-sm text-slate-800 whitespace-pre-wrap bg-slate-50 rounded-lg p-3 border">{item.text}</div>
+              {item.sources?.length > 0 && (
+                <div className="text-xs text-slate-500">Sources: {item.sources.join(' · ')}</div>
+              )}
+              <div className="text-xs text-slate-500">
+                Channel: {status?.channel?.title || status?.channel?.username || processEnvChannelHint()}
               </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="btn-primary text-sm"
+                  disabled={busyId === item.id || !status?.connected}
+                  onClick={() => handleApprove(item, 'now')}
+                >
+                  <Send className="w-4 h-4" /> Approve & Publish
+                </button>
+                <button
+                  className="btn-secondary text-sm"
+                  disabled={busyId === item.id || !status?.connected || !scheduleAt}
+                  onClick={() => handleApprove(item, 'schedule')}
+                >
+                  <Calendar className="w-4 h-4" /> Approve & Schedule
+                </button>
+                <button className="btn-ghost text-sm" onClick={() => handleReject(item, true)}>Request Revision</button>
+                <button className="btn-ghost text-sm text-rose-600" onClick={() => handleReject(item, false)}>Reject</button>
+              </div>
+              {!status?.connected && (
+                <p className="text-xs text-amber-700">Connect Telegram in Channels before publish.</p>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {tab === 'posts' && (
-        <>
-          <div className="flex flex-wrap gap-2">
-            <div className="relative flex-1 min-w-[160px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input className="input pl-9" placeholder={t('search')} value={search} onChange={e => setSearch(e.target.value)} />
+      {tab === 'calendar' && (
+        <div className="space-y-3">
+          {scheduled.length === 0 && <div className="card p-6 text-slate-500 text-center">No scheduled posts</div>}
+          {scheduled.map((item) => (
+            <div key={item.id} className="card p-4 flex justify-between gap-3">
+              <div>
+                <p className="font-medium">{item.title}</p>
+                <p className="text-xs text-slate-500">{item.scheduledAt}</p>
+              </div>
+              <span className="badge bg-blue-50 text-blue-700">scheduled</span>
             </div>
-            <select className="input w-auto" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-              <option value="ALL">{t('allData')}</option>
-              {postStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-
-          {view === 'table' ? (
-            <div className="card overflow-x-auto">
-              <table className="w-full text-sm min-w-[720px]">
-                <thead className="bg-slate-50 border-b">
-                  <tr>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">{t('title')}</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Platform</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Lang</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">{t('status')}</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">{t('date')}</th>
-                    <th className="text-right px-4 py-3 font-medium text-slate-600">{t('actions')}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filtered.map(p => (
-                    <tr key={p.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium">{p.title} {p.isDemo && <span className="badge bg-amber-50 text-amber-700 text-[10px] ml-1">{t('demo')}</span>}</td>
-                      <td className="px-4 py-3">{p.platform}</td>
-                      <td className="px-4 py-3">{p.language.toUpperCase()}</td>
-                      <td className="px-4 py-3">
-                        <select className="text-xs border border-slate-200 rounded px-2 py-1" value={p.status} onChange={e => updatePost(p.id, { status: e.target.value as MediaPostStatus })}>
-                          {postStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500">{p.publishDate ? formatDate(p.publishDate) : '—'}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => openPost(p)} className="p-1.5 hover:bg-slate-100 rounded"><Pencil className="w-4 h-4 text-slate-500" /></button>
-                        <button onClick={() => confirmDel(() => deletePost(p.id))} className="p-1.5 hover:bg-rose-50 rounded"><Trash2 className="w-4 h-4 text-slate-500" /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {calendarGroups.map(([date, items]) => (
-                <div key={date} className="card p-4">
-                  <h3 className="text-sm font-semibold text-slate-700 mb-3">{date === 'No date' ? 'No date' : formatDate(date)}</h3>
-                  <div className="space-y-2">
-                    {items.map(p => (
-                      <div key={p.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-slate-50">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{p.title}</p>
-                          <p className="text-xs text-slate-500">{p.platform} · {p.status}</p>
-                        </div>
-                        <div className="flex gap-1 flex-shrink-0">
-                          <button onClick={() => openPost(p)} className="p-1.5 hover:bg-white rounded"><Pencil className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => confirmDel(() => deletePost(p.id))} className="p-1.5 hover:bg-white rounded"><Trash2 className="w-3.5 h-3.5" /></button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {modal === 'post' && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40">
-          <div className="bg-white rounded-t-xl sm:rounded-xl w-full max-w-md p-6 space-y-3 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold">{editId ? t('edit') : 'Post / Script'}</h2>
-            <input className="input" placeholder={t('title')} value={postForm.title} onChange={e => setPostForm({ ...postForm, title: e.target.value })} />
-            <div className="grid grid-cols-2 gap-3">
-              <select className="input" value={postForm.platform} onChange={e => setPostForm({ ...postForm, platform: e.target.value })}>
-                {['YouTube', 'TikTok', 'Instagram', 'Telegram', 'VK'].map(p => <option key={p}>{p}</option>)}
-              </select>
-              <select className="input" value={postForm.language} onChange={e => setPostForm({ ...postForm, language: e.target.value as Language })}>
-                <option value="ru">RU</option><option value="en">EN</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <input className="input" placeholder="Format" value={postForm.format} onChange={e => setPostForm({ ...postForm, format: e.target.value })} />
-              <input type="date" className="input" value={postForm.publishDate} onChange={e => setPostForm({ ...postForm, publishDate: e.target.value })} />
-            </div>
-            <select className="input" value={postForm.status} onChange={e => setPostForm({ ...postForm, status: e.target.value as MediaPostStatus })}>
-              {postStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select className="input" value={postForm.channelId} onChange={e => setPostForm({ ...postForm, channelId: e.target.value })}>
-              <option value="">— Channel —</option>
-              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <select className="input" value={postForm.assigneeId} onChange={e => setPostForm({ ...postForm, assigneeId: e.target.value })}>
-              <option value="">— {t('assignee')} —</option>
-              {employees.map(e => <option key={e.id} value={e.id}>{e.role}</option>)}
-            </select>
-            <textarea className="input min-h-[100px]" placeholder="Script / body" value={postForm.body} onChange={e => setPostForm({ ...postForm, body: e.target.value })} />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setModal(null)} className="btn-secondary">{t('cancel')}</button>
-              <button onClick={savePost} className="btn-primary">{t('save')}</button>
-            </div>
-          </div>
+          ))}
+          <p className="text-xs text-slate-500">
+            Server cron runs every 15 minutes when Upstash is configured. Without Upstash, use Approve & Publish only.
+          </p>
         </div>
       )}
 
-      {modal === 'channel' && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40">
-          <div className="bg-white rounded-t-xl sm:rounded-xl w-full max-w-md p-6 space-y-3">
-            <h2 className="text-lg font-semibold">{editId ? t('edit') : 'Channel'}</h2>
-            <input className="input" placeholder={t('name')} value={chForm.name} onChange={e => setChForm({ ...chForm, name: e.target.value })} />
-            <select className="input" value={chForm.platform} onChange={e => setChForm({ ...chForm, platform: e.target.value })}>
-              {['YouTube', 'TikTok', 'Instagram', 'Telegram', 'VK'].map(p => <option key={p}>{p}</option>)}
-            </select>
-            <select className="input" value={chForm.language} onChange={e => setChForm({ ...chForm, language: e.target.value as Language })}>
-              <option value="ru">RU</option><option value="en">EN</option>
-            </select>
-            <input className="input" placeholder="URL (optional)" value={chForm.url} onChange={e => setChForm({ ...chForm, url: e.target.value })} />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setModal(null)} className="btn-secondary">{t('cancel')}</button>
-              <button onClick={saveChannel} className="btn-primary">{t('save')}</button>
+      {tab === 'published' && (
+        <div className="space-y-3">
+          {published.length === 0 && <div className="card p-6 text-slate-500 text-center">No published posts in this session</div>}
+          {published.map((item) => (
+            <div key={item.id} className="card p-4">
+              <div className="flex justify-between gap-2">
+                <p className="font-medium">{item.title}</p>
+                <span className="badge bg-emerald-50 text-emerald-700">published</span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {item.publishedAt} · msg {item.telegramMessageId ?? '—'}
+              </p>
             </div>
-          </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'settings' && (
+        <div className="card p-5 space-y-3 text-sm text-slate-700">
+          <h2 className="font-semibold text-slate-900">Media Settings (server env)</h2>
+          <p>Secrets are set only in Vercel Project → Settings → Environment Variables. Never in GitHub.</p>
+          <ul className="list-disc list-inside space-y-1 text-slate-600">
+            <li>TELEGRAM_BOT_TOKEN — required</li>
+            <li>TELEGRAM_CHANNEL_ID — @channel or numeric -100…</li>
+            <li>OPENAI_API_KEY or XAI_API_KEY — optional AI drafts</li>
+            <li>ENABLE_IMAGE_GEN=true — optional DALL·E (needs OPENAI_API_KEY)</li>
+            <li>UPSTASH_REDIS_REST_URL + TOKEN — scheduled posts + daily cron</li>
+            <li>CRON_SECRET — protect cron routes</li>
+            <li>MEDIA_API_SECRET — optional write protection</li>
+          </ul>
         </div>
       )}
     </div>
+  )
+}
+
+function processEnvChannelHint() {
+  return 'TELEGRAM_CHANNEL_ID (server)'
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="card p-4">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="text-2xl font-semibold text-slate-900 mt-1">{value}</p>
+    </div>
+  )
+}
+
+function SetupWizard({ status, onRefresh }: { status: TelegramStatus | null; onRefresh: () => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Radio className="w-5 h-5 text-namt-600" />
+          <h2 className="font-semibold text-slate-900">Telegram Setup Wizard</h2>
+        </div>
+        <p className="text-sm text-slate-600">
+          Official Bot API only. CEO must create the bot and grant channel admin rights. The platform never asks you to paste the token into the browser — only into Vercel env.
+        </p>
+
+        <ol className="space-y-4 text-sm">
+          <Step n={1} title="Create a bot via @BotFather">
+            Open Telegram → search <b>@BotFather</b> → <code>/newbot</code> → follow prompts → copy the <b>HTTP API token</b>.
+          </Step>
+          <Step n={2} title="Create or choose the NAMT AI channel">
+            Create a public/private channel for NAMT AI. Copy username (<code>@namt_ai</code>) or numeric id later.
+          </Step>
+          <Step n={3} title="Add the bot as channel administrator">
+            Channel → Administrators → Add administrator → select your bot.
+            Enable at least: <b>Post messages</b>. For branding attempts: change channel info if available.
+          </Step>
+          <Step n={4} title="Set Vercel environment variables">
+            Vercel → Project → Settings → Environment Variables:
+            <ul className="list-disc list-inside mt-1 text-slate-600">
+              <li><code>TELEGRAM_BOT_TOKEN</code> = token from BotFather</li>
+              <li><code>TELEGRAM_CHANNEL_ID</code> = <code>@your_channel</code> or <code>-100…</code></li>
+            </ul>
+            Redeploy after saving.
+          </Step>
+          <Step n={5} title="Verify connection">
+            Click Refresh status. You should see bot username and channel title.
+            <div className="mt-2">
+              <button type="button" className="btn-secondary text-sm" onClick={onRefresh}>Check connection</button>
+            </div>
+          </Step>
+        </ol>
+
+        {status?.connected && (
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-900">
+            Connected: @{status.bot?.username} → {status.channel?.title || status.channel?.username}
+            {status.channel?.error && <p className="text-amber-800 mt-1">{status.channel.error}</p>}
+          </div>
+        )}
+
+        <a
+          className="text-sm text-namt-700 inline-flex items-center gap-1 hover:underline"
+          href="https://core.telegram.org/bots/api"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Telegram Bot API docs <ExternalLink className="w-3.5 h-3.5" />
+        </a>
+      </div>
+
+      <div className="card p-5 text-sm text-slate-600">
+        <h3 className="font-medium text-slate-900 mb-2">Channel branding</h3>
+        <p>
+          setChatDescription / setChatPhoto require admin rights and may be limited by Telegram.
+          Agent may <b>propose</b> avatar, description and pinned welcome post for CEO approval;
+          automatic application is best-effort and will report API errors honestly if unsupported.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <div className="w-7 h-7 rounded-full bg-slate-900 text-white text-xs flex items-center justify-center flex-shrink-0">{n}</div>
+      <div>
+        <p className="font-medium text-slate-900">{title}</p>
+        <div className="text-slate-600 mt-1 leading-relaxed">{children}</div>
+      </div>
+    </li>
   )
 }
