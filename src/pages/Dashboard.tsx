@@ -2,10 +2,9 @@ import { useTranslation } from '../hooks/useTranslation'
 import { useAppStore } from '../store/useAppStore'
 import { formatCurrency } from '../lib/utils'
 import { statusLabel } from '../i18n/translations'
-import { TrendingUp, TrendingDown, Users, CheckSquare, Bot, AlertCircle } from 'lucide-react'
+import { TrendingUp, TrendingDown, Users, CheckSquare, Bot, AlertCircle, Briefcase, Clapperboard, FlaskConical } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-// Illustrative DEMO chart — not live company money
 const chartData = [
   { name: 'May', revenue: 620, expenses: 310 },
   { name: 'Jun', revenue: 680, expenses: 340 },
@@ -22,6 +21,11 @@ export function Dashboard() {
   const finance = useAppStore(s => s.finance)
   const decisions = useAppStore(s => s.decisions)
   const employees = useAppStore(s => s.employees)
+  const agencyProjects = useAppStore(s => s.agencyProjects)
+  const agencyProposals = useAppStore(s => s.agencyProposals)
+  const mediaPosts = useAppStore(s => s.mediaPosts)
+  const mediaChannels = useAppStore(s => s.mediaChannels)
+  const labProducts = useAppStore(s => s.labProducts)
 
   const demoIncome = finance.filter(f => f.type === 'INCOME' && f.isDemo).reduce((s, f) => s + f.amount, 0)
   const demoExpense = finance.filter(f => f.type === 'EXPENSE' && f.isDemo).reduce((s, f) => s + f.amount, 0)
@@ -29,6 +33,10 @@ export function Dashboard() {
   const realExpense = finance.filter(f => f.type === 'EXPENSE' && !f.isDemo).reduce((s, f) => s + f.amount, 0)
   const pendingDecisions = decisions.filter(d => d.status === 'PENDING').length
   const activeEmployees = employees.filter(e => e.status === 'ACTIVE' || e.status === 'BUSY').length
+
+  const activeAgency = agencyProjects.filter(p => ['ACTIVE', 'IN_PROGRESS', 'REVIEW'].includes(p.status))
+  const plannedPosts = mediaPosts.filter(p => ['PLANNED', 'DRAFT', 'READY', 'CEO_APPROVAL'].includes(p.status))
+  const productsInDev = labProducts.filter(p => ['PLANNING', 'DEVELOPMENT', 'TESTING', 'MVP'].includes(p.stage))
 
   return (
     <div className="space-y-6">
@@ -45,7 +53,6 @@ export function Dashboard() {
         </select>
       </div>
 
-      {/* DEMO metrics */}
       <div>
         <p className="text-xs font-medium text-amber-700 mb-2">
           <span className="badge bg-amber-50 text-amber-700 border border-amber-200 mr-2">{t('demo')}</span>
@@ -59,13 +66,52 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* REAL metrics */}
       <div>
         <p className="text-xs font-medium text-slate-600 mb-2">{t('real')}</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <StatCard label={t('revenue')} value={formatCurrency(realIncome)} change="—" positive={false} />
           <StatCard label={t('expenses')} value={formatCurrency(realExpense)} change="—" positive={false} />
           <StatCard label={t('profit')} value={formatCurrency(realIncome - realExpense)} change="—" positive={realIncome - realExpense >= 0} />
+        </div>
+      </div>
+
+      {/* Ops: Agency / Media / Labs */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Briefcase className="w-4 h-4 text-namt-600" />
+            <h3 className="font-semibold text-slate-900">{t('agency')}</h3>
+          </div>
+          <div className="space-y-2 text-sm">
+            <Row label="Active projects" value={String(activeAgency.length)} demo={activeAgency.some(p => p.isDemo)} />
+            <Row label="All projects" value={String(agencyProjects.length)} />
+            <Row label="Proposals / orders" value={String(agencyProposals.length)} demo={agencyProposals.some(p => p.isDemo)} />
+            <Row label="REAL projects" value={String(agencyProjects.filter(p => !p.isDemo).length)} />
+          </div>
+        </div>
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Clapperboard className="w-4 h-4 text-rose-500" />
+            <h3 className="font-semibold text-slate-900">{t('media')}</h3>
+          </div>
+          <div className="space-y-2 text-sm">
+            <Row label="Channels" value={String(mediaChannels.length)} demo={mediaChannels.some(c => c.isDemo)} />
+            <Row label="Planned / pipeline" value={String(plannedPosts.length)} />
+            <Row label="All posts" value={String(mediaPosts.length)} />
+            <Row label="REAL posts" value={String(mediaPosts.filter(p => !p.isDemo).length)} />
+          </div>
+        </div>
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <FlaskConical className="w-4 h-4 text-indigo-500" />
+            <h3 className="font-semibold text-slate-900">{t('labs')}</h3>
+          </div>
+          <div className="space-y-2 text-sm">
+            <Row label="In development" value={String(productsInDev.length)} demo={productsInDev.some(p => p.isDemo)} />
+            <Row label="All products" value={String(labProducts.length)} />
+            <Row label="Stages" value={productsInDev.map(p => p.stage).join(', ') || '—'} />
+            <Row label="REAL products" value={String(labProducts.filter(p => !p.isDemo).length)} />
+          </div>
         </div>
       </div>
 
@@ -199,6 +245,18 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function Row({ label, value, demo }: { label: string; value: string; demo?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-medium text-slate-900 flex items-center gap-1">
+        {value}
+        {demo && <span className="badge bg-amber-50 text-amber-700 text-[9px]">DEMO</span>}
+      </span>
     </div>
   )
 }
