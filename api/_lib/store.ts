@@ -1,19 +1,6 @@
 /**
- * Lightweight server store for scheduled posts & production queue.
- * Prefers Upstash Redis REST if configured; otherwise returns null (caller must handle).
+ * Upstash Redis REST helpers + media queue types.
  */
-
-export type ScheduledPost = {
-  id: string
-  text: string
-  imageUrl?: string
-  scheduledAt: string // ISO
-  channelId: string
-  status: 'scheduled' | 'published' | 'failed'
-  createdAt: string
-  sources?: string[]
-  title?: string
-}
 
 export type ProductionItem = {
   id: string
@@ -22,7 +9,7 @@ export type ProductionItem = {
   imageUrl?: string
   sources: string[]
   stage: string
-  status: 'pending_approval' | 'approved' | 'rejected' | 'revision' | 'scheduled' | 'published' | 'failed'
+  status: 'draft' | 'queued' | 'published' | 'failed'
   scheduledAt?: string
   publishedAt?: string
   telegramMessageId?: string | number
@@ -31,7 +18,6 @@ export type ProductionItem = {
 }
 
 const QUEUE_KEY = 'namt:media:queue'
-const SCHEDULE_KEY = 'namt:media:scheduled'
 
 function upstash() {
   const url = process.env.UPSTASH_REDIS_REST_URL
@@ -40,7 +26,11 @@ function upstash() {
   return { url, token }
 }
 
-async function redisFetch(command: (string | number)[]) {
+export function hasServerStore() {
+  return Boolean(upstash())
+}
+
+export async function redisFetch(command: (string | number)[]): Promise<unknown | null> {
   const cfg = upstash()
   if (!cfg) return null
   const res = await fetch(cfg.url, {
@@ -56,12 +46,18 @@ async function redisFetch(command: (string | number)[]) {
   return data.result
 }
 
-export function hasServerStore() {
-  return Boolean(upstash())
+export async function redisGet(key: string): Promise<unknown | null> {
+  return redisFetch(['GET', key])
+}
+
+export async function redisSet(key: string, value: string): Promise<boolean> {
+  if (!upstash()) return false
+  await redisFetch(['SET', key, value])
+  return true
 }
 
 export async function getQueue(): Promise<ProductionItem[]> {
-  const raw = await redisFetch(['GET', QUEUE_KEY])
+  const raw = await redisGet(QUEUE_KEY)
   if (!raw) return []
   try {
     return JSON.parse(typeof raw === 'string' ? raw : String(raw))
@@ -70,24 +66,6 @@ export async function getQueue(): Promise<ProductionItem[]> {
   }
 }
 
-export async function saveQueue(items: ProductionItem[]) {
-  if (!upstash()) return false
-  await redisFetch(['SET', QUEUE_KEY, JSON.stringify(items)])
-  return true
-}
-
-export async function getScheduled(): Promise<ScheduledPost[]> {
-  const raw = await redisFetch(['GET', SCHEDULE_KEY])
-  if (!raw) return []
-  try {
-    return JSON.parse(typeof raw === 'string' ? raw : String(raw))
-  } catch {
-    return []
-  }
-}
-
-export async function saveScheduled(items: ScheduledPost[]) {
-  if (!upstash()) return false
-  await redisFetch(['SET', SCHEDULE_KEY, JSON.stringify(items)])
-  return true
+export async function saveQueue(items: ProductionItem[]): Promise<boolean> {
+  return redisSet(QUEUE_KEY, JSON.stringify(items))
 }

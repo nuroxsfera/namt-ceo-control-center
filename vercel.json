@@ -1,12 +1,20 @@
 {
   "crons": [
     {
-      "path": "/api/cron/publish-scheduled",
-      "schedule": "*/15 * * * *"
+      "path": "/api/cron/daily-media",
+      "schedule": "0 7 * * *"
     },
     {
       "path": "/api/cron/daily-media",
-      "schedule": "0 6 * * *"
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/daily-media",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/publish-scheduled",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
