@@ -1,14 +1,20 @@
-/** Client helpers for NAMT Media server API. Secrets never stored here. */
-
 export type TelegramStatus = {
   connected: boolean
   error?: string
   setupRequired?: boolean
   serverStore?: boolean
   hasAiKey?: boolean
-  bot?: { id: number; username?: string; name?: string }
-  channel?: { id?: number | string; title?: string; username?: string; type?: string; error?: string }
-  capabilities?: Record<string, string | boolean>
+  autonomous?: boolean
+  source?: 'platform' | 'env'
+  bot?: { id?: number; username?: string; name?: string }
+  channel?: { title?: string; username?: string; type?: string; error?: string }
+  settings?: {
+    autonomous: boolean
+    language: 'ru' | 'en'
+    postsPerDay: number
+    topicFocus: string
+  }
+  telegramLimits?: { customFonts: boolean; note: string }
 }
 
 export type MediaProductionItem = {
@@ -31,35 +37,38 @@ export async function fetchTelegramStatus(): Promise<TelegramStatus> {
   return res.json()
 }
 
-export async function publishToTelegram(payload: {
-  text: string
-  imageUrl?: string
-  title?: string
-  sources?: string[]
-  mode: 'now' | 'schedule'
-  scheduledAt?: string
-  clientId?: string
-}) {
-  const res = await fetch('/api/telegram/publish', {
+export async function connectTelegram(botToken: string, channelId: string) {
+  const res = await fetch('/api/telegram/connect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ botToken, channelId }),
   })
   const data = await res.json()
   return { ok: res.ok, status: res.status, data }
 }
 
-export async function generateMediaDraft(topic?: string) {
-  const res = await fetch('/api/media/generate', {
+export async function disconnectTelegram() {
+  const res = await fetch('/api/telegram/connect', { method: 'DELETE' })
+  return res.json()
+}
+
+export async function runAutonomousOnce() {
+  const res = await fetch('/api/media/run-once', { method: 'POST' })
+  const data = await res.json()
+  return { ok: res.ok, data }
+}
+
+export async function saveMediaSettings(settings: Record<string, unknown>) {
+  const res = await fetch('/api/media/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topic }),
+    body: JSON.stringify(settings),
   })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, data }
+  return res.json()
 }
 
 export async function fetchServerQueue() {
   const res = await fetch('/api/media/queue')
-  return res.json() as Promise<{ items: MediaProductionItem[]; serverStore: boolean; note?: string }>
+  if (!res.ok) return { items: [] as MediaProductionItem[], serverStore: false }
+  return res.json() as Promise<{ items: MediaProductionItem[]; serverStore: boolean }>
 }
